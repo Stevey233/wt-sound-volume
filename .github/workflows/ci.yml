@@ -59,18 +59,20 @@ jobs:
             cp dist/wt-sound-volume "out/${{ matrix.asset }}"
           fi
           python - <<'PY'
-          import pathlib, shutil, sys, tkinter
+          import pathlib, shutil, sys, sysconfig, tkinter
           out = pathlib.Path("out")
           suffix = "windows" if sys.platform == "win32" else "linux"
-          for name in ("LICENSE.txt", "LICENSE"):
-              path = pathlib.Path(sys.base_prefix) / name
-              if path.is_file():
-                  shutil.copy(path, out / f"python-license-{suffix}.txt")
-                  break
           tk = pathlib.Path(tkinter.Tcl().eval("info library")).parent
-          for path in tk.glob("tk8*/license.terms"):
-              shutil.copy(path, out / f"tk-license-{suffix}.txt")
-              break
+          # Windows Python keeps both files in its own folder. On Linux the Tk license comes from the system package.
+          found = {
+              "python": [pathlib.Path(sys.base_prefix) / "LICENSE.txt", pathlib.Path(sysconfig.get_path("stdlib")) / "LICENSE.txt"],
+              "tk": [*tk.glob("tk8*/license.terms"), pathlib.Path("/usr/share/doc/libtk8.6/copyright"), pathlib.Path("/usr/share/doc/tk8.6/copyright")],
+          }
+          for name, paths in found.items():
+              path = next((p for p in paths if p.is_file()), None)
+              if path is None:
+                  raise SystemExit(f"No {name} license file found in {paths}")
+              shutil.copy(path, out / f"{name}-license-{suffix}.txt")
           PY
           cd out && sha256sum * > "SHA256SUMS-${{ matrix.asset }}.txt"
       - uses: actions/upload-artifact@v7
