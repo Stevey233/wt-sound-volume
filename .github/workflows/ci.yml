@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install ruff==0.17.1
+      - run: ruff check .
+      # The sample packs are third-party works, so the tests that need them are skipped here.
+      - name: Test on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s . -v
+      - name: Test on Windows
+        if: runner.os == 'Windows'
+        run: python -m unittest discover -s . -v
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: wt-sound-volume-windows-x64.exe
+          - os: ubuntu-latest
+            asset: wt-sound-volume-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pyinstaller==6.22.3
+      - run: python -m PyInstaller --onefile --windowed --noconfirm --name wt-sound-volume app.py
+      - name: Collect the program and the licenses of what it bundles
+        shell: bash
+        run: |
+          mkdir out
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cp dist/wt-sound-volume.exe "out/${{ matrix.asset }}"
+          else
+            cp dist/wt-sound-volume "out/${{ matrix.asset }}"
+          fi
+          python - <<'PY'
+          import pathlib, shutil, sys, tkinter
+          out = pathlib.Path("out")
+          suffix = "windows" if sys.platform == "win32" else "linux"
+          for name in ("LICENSE.txt", "LICENSE"):
+              path = pathlib.Path(sys.base_prefix) / name
+              if path.is_file():
+                  shutil.copy(path, out / f"python-license-{suffix}.txt")
+                  break
+          tk = pathlib.Path(tkinter.Tcl().eval("info library")).parent
+          for path in tk.glob("tk8*/license.terms"):
+              shutil.copy(path, out / f"tk-license-{suffix}.txt")
+              break
+          PY
+          cd out && sha256sum * > "SHA256SUMS-${{ matrix.asset }}.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" assets/* --title "$GITHUB_REF_NAME" --notes-file "release-notes/$GITHUB_REF_NAME.md"

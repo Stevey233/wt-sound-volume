@@ -1,0 +1,8 @@
+# Sound packs are third-party works and stay out of the repository.
+samples/
+exports/
+build/
+dist/
+__pycache__/
+*.spec
+.ruff_cache/
